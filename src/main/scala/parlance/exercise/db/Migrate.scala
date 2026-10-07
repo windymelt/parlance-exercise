@@ -1,5 +1,7 @@
 package parlance.exercise.db
 
+import parlance.exercise.Logging
+
 import scala.util.Using
 
 /** マイグレーションを操作するCLI。`sbt "runMain parlance.exercise.db.Migrate status"`のように呼ぶ。 */
@@ -14,6 +16,7 @@ object Migrate:
 
   def main(args: Array[String]): Unit =
     val command = args.headOption.getOrElse("migrate")
+    Logging.configure()
     Using.resource(Database.fromEnv()): db =>
       command match
         case "migrate" =>
