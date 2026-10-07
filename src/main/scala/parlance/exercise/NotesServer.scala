@@ -1,16 +1,26 @@
 package parlance.exercise
 
-import com.github.plokhotnyuk.jsoniter_scala.core.*
-import dev.capslock.inertia.cask.InertiaCask
 import dev.capslock.inertia.core.JsoniterProps.*
 import dev.capslock.inertia.core.{*, given}
+import dev.capslock.inertia.tapir.*
+import sttp.model.StatusCode
+import sttp.tapir.*
+import sttp.tapir.files.*
+import sttp.tapir.json.jsoniter.*
+import sttp.tapir.server.ServerEndpoint
+import sttp.tapir.server.netty.NettyFutureServer
 
 import java.nio.file.{Files, Path}
 import java.time.Instant
+import java.util.concurrent.CountDownLatch
+import scala.concurrent.duration.*
+import scala.concurrent.{Await, ExecutionContext, Future}
 
-object NotesServer extends cask.MainRoutes:
+object NotesServer:
 
-  override def port: Int = sys.env.get("PORT").flatMap(_.toIntOption).getOrElse(9000)
+  private given ExecutionContext = ExecutionContext.global
+
+  private val port: Int = sys.env.get("PORT").flatMap(_.toIntOption).getOrElse(9000)
 
   private val distDir: Path = Path.of("frontend", "dist")
 
@@ -30,13 +40,26 @@ object NotesServer extends cask.MainRoutes:
       ),
     )
 
+  // jsonBody[NoteInput]に必要なスキーマ。JSONコーデックはNoteInputのコンパニオンにある。
+  private given Schema[NoteInput] = Schema.derived
+
+  // Inertiaのページオブジェクトに入れるURL。パスとクエリだけを使う。
+  private val requestUrl: EndpointInput[String] =
+    extractFromRequest(req => req.uri.copy(scheme = None, authority = None).toString)
+
+  private val notFound: EndpointOutput[String] = statusCode(StatusCode.NotFound).and(stringBody)
+
   private def renderIndex(
-    req: cask.Request,
+    headers: InertiaHeaders,
+    url: String,
+    method: String,
     selected: Option[Note],
     errors: Map[String, String] = Map.empty,
-  ): cask.Response[String] =
-    InertiaCask.render(
-      req,
+  ): InertiaResponse =
+    InertiaTapir.render(
+      headers,
+      url,
+      method,
       component = "Notes/Index",
       props = Props.of(
         "notes"    -> prop(repo.list()),
@@ -47,49 +70,90 @@ object NotesServer extends cask.MainRoutes:
       layoutFn = layout.render,
     )
 
-  private def notFound: cask.Response[String] = cask.Response("Not Found", statusCode = 404)
+  private def redirect(headers: InertiaHeaders, method: String, location: String): InertiaResponse =
+    InertiaTapir.redirect(method, location, 303, headers.isInertia)
 
-  @cask.get("/")
-  def index(req: cask.Request) = renderIndex(req, selected = None)
+  // ── Endpoints ───────────────────────────────────────────────────────────────
 
-  @cask.get("/notes/:id")
-  def show(req: cask.Request, id: Long) =
-    repo.find(id) match
-      case Some(note) => renderIndex(req, selected = Some(note))
-      case None       => notFound
+  // パス入力のないエンドポイントはすべてのパスに一致する。ルートだけに限定するため空パスを指定する。
+  private val index = endpoint.get
+    .in("")
+    .in(InertiaTapir.inertiaHeadersInput)
+    .in(requestUrl)
+    .out(InertiaTapir.inertiaOutput)
+    .serverLogicSuccess[Future]: (headers, url) =>
+      Future.successful(renderIndex(headers, url, "GET", selected = None))
 
-  // @cask.postJsonは戻り値をJSONとして再シリアライズする。
-  // Inertiaレスポンスをそのまま返すため、@cask.postで受けて本文を自分で読む。
-  @cask.post("/notes")
-  def create(req: cask.Request) =
-    val input  = readFromString[NoteInput](req.text())
-    val errors = NoteInput.validate(input)
-    if errors.nonEmpty then renderIndex(req, selected = None, errors = errors)
-    else
-      val note = repo.create(input, Instant.now())
-      InertiaCask.redirect(req, s"/notes/${note.id}")
+  private val show = endpoint.get
+    .in("notes" / path[Long]("id"))
+    .in(InertiaTapir.inertiaHeadersInput)
+    .in(requestUrl)
+    .out(InertiaTapir.inertiaOutput)
+    .errorOut(notFound)
+    .serverLogic[Future]: (id, headers, url) =>
+      Future.successful:
+        repo.find(id) match
+          case Some(note) => Right(renderIndex(headers, url, "GET", selected = Some(note)))
+          case None       => Left("Not Found")
 
-  @cask.put("/notes/:id")
-  def update(req: cask.Request, id: Long) =
-    repo.find(id) match
-      case None           => notFound
-      case Some(existing) =>
-        val input  = readFromString[NoteInput](req.text())
+  private val create = endpoint.post
+    .in("notes")
+    .in(InertiaTapir.inertiaHeadersInput)
+    .in(requestUrl)
+    .in(jsonBody[NoteInput])
+    .out(InertiaTapir.inertiaOutput)
+    .serverLogicSuccess[Future]: (headers, url, input) =>
+      Future.successful:
         val errors = NoteInput.validate(input)
-        if errors.nonEmpty then renderIndex(req, selected = Some(existing), errors = errors)
+        if errors.nonEmpty then renderIndex(headers, url, "POST", selected = None, errors = errors)
         else
-          repo.update(id, input, Instant.now())
-          InertiaCask.redirect(req, s"/notes/$id")
+          val note = repo.create(input, Instant.now())
+          redirect(headers, "POST", s"/notes/${note.id}")
 
-  @cask.delete("/notes/:id")
-  def delete(req: cask.Request, id: Long) =
-    if repo.delete(id) then InertiaCask.redirect(req, "/") else notFound
+  private val update = endpoint.put
+    .in("notes" / path[Long]("id"))
+    .in(InertiaTapir.inertiaHeadersInput)
+    .in(requestUrl)
+    .in(jsonBody[NoteInput])
+    .out(InertiaTapir.inertiaOutput)
+    .errorOut(notFound)
+    .serverLogic[Future]: (id, headers, url, input) =>
+      Future.successful:
+        repo.find(id) match
+          case None           => Left("Not Found")
+          case Some(existing) =>
+            val errors = NoteInput.validate(input)
+            if errors.nonEmpty then Right(renderIndex(headers, url, "PUT", selected = Some(existing), errors = errors))
+            else
+              repo.update(id, input, Instant.now())
+              Right(redirect(headers, "PUT", s"/notes/$id"))
+
+  private val delete = endpoint.delete
+    .in("notes" / path[Long]("id"))
+    .in(InertiaTapir.inertiaHeadersInput)
+    .out(InertiaTapir.inertiaOutput)
+    .errorOut(notFound)
+    .serverLogic[Future]: (id, headers) =>
+      Future.successful:
+        if repo.delete(id) then Right(redirect(headers, "DELETE", "/")) else Left("Not Found")
 
   // vite buildの成果物を配信する。devサーバ利用時はディレクトリがなく404を返すだけで問題はない。
-  @cask.staticFiles("/assets")
-  def assets() = distDir.resolve("assets").toString
+  private val assets: ServerEndpoint[Any, Future] =
+    staticFilesGetServerEndpoint[Future]("assets")(distDir.resolve("assets").toAbsolutePath.toString)
 
-  initialize()
+  val endpoints: List[ServerEndpoint[Any, Future]] =
+    List(index, show, create, update, delete, assets)
 
-  if Files.isDirectory(distDir) then println(s"frontend: serving built assets from $distDir")
-  else println("frontend: expecting Vite dev server (run `npm run dev` in frontend/)")
+  // ── Main ────────────────────────────────────────────────────────────────────
+
+  def main(args: Array[String]): Unit =
+    val binding = Await.result(NettyFutureServer().port(port).addEndpoints(endpoints).start(), Duration.Inf)
+    println(s"listening on http://localhost:${binding.port}")
+    if Files.isDirectory(distDir) then println(s"frontend: serving built assets from $distDir")
+    else println("frontend: expecting Vite dev server (run `npm run dev` in frontend/)")
+
+    val stopped = new CountDownLatch(1)
+    sys.addShutdownHook:
+      Await.result(binding.stop(), 10.seconds)
+      stopped.countDown()
+    stopped.await()

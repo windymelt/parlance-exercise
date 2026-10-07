@@ -1,7 +1,7 @@
 # parlance-exercise
 
 [inertia-scala](https://github.com/windymelt/inertia-scala) を使ったメモ帳アプリです。
-サーバは Scala 3 + [Cask](https://com-lihaoyi.github.io/cask/)、フロントエンドは Vite + React + TypeScript で構成しています。
+サーバは Scala 3 + [Tapir](https://tapir.softwaremill.com/)（Netty バックエンド、`Future`）、フロントエンドは Vite + React + TypeScript で構成しています。
 メモはタイトル・本文・タグを持ちます。
 
 現時点ではメモの保存先はインメモリ（`InMemoryNoteRepository`）で、プロセスを再起動すると内容は消えます。
@@ -12,7 +12,7 @@
 ```
 build.sbt
 src/main/scala/parlance/exercise/
-  NotesServer.scala      Cask のルート定義。InertiaCask.render / redirect を呼ぶ
+  NotesServer.scala      Tapir のエンドポイント定義。InertiaTapir.render / redirect を呼ぶ
   Note.scala             Note モデル・フォーム入力・バリデーション・jsoniter コーデック
   NoteRepository.scala   永続化境界のトレイトとインメモリ実装
   Layout.scala           Inertia のページ要素を包む HTML レイアウト（dev / build の 2 種）
@@ -25,6 +25,8 @@ frontend/
 ```
 
 ## ルート
+
+各エンドポイントは `InertiaTapir.inertiaHeadersInput` で Inertia のヘッダを受け取り、`InertiaTapir.inertiaOutput` でステータス・本文・ヘッダを返します。リクエスト本文は `tapir-jsoniter-scala` の `jsonBody[NoteInput]` で受けるため、JSON として不正な本文には Tapir が 400 を返します。
 
 | メソッド | パス | 動作 |
 | --- | --- | --- |
@@ -47,7 +49,7 @@ frontend/
 
 ```console
 $ cd frontend && npm install && npm run dev   # Vite dev サーバ (http://localhost:5173)
-$ sbt run                                      # Cask サーバ (http://localhost:9000)
+$ sbt run                                      # Tapir サーバ (http://localhost:9000)
 ```
 
 ブラウザでは http://localhost:9000 を開きます。`frontend/dist` が存在しない間、サーバは Vite dev サーバ（既定 `http://localhost:5173`、環境変数 `VITE_DEV_SERVER` で変更可）を参照する HTML を返します。
