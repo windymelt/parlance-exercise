@@ -10,6 +10,7 @@ import sttp.tapir.files.*
 import sttp.tapir.json.jsoniter.*
 import sttp.tapir.server.ServerEndpoint
 import sttp.tapir.server.netty.NettyFutureServer
+import wvlet.airframe.ulid.ULID
 
 import java.nio.file.{Files, Path}
 import java.util.concurrent.CountDownLatch
@@ -72,6 +73,11 @@ object NotesServer:
 
   // ── Endpoints ───────────────────────────────────────────────────────────────
 
+  // パスのidは文字列として受け、ここでULIDに解釈する。Tapirのパス復号で失敗させると既定では405になるため、
+  // ULIDでない文字列は存在しないメモと同じ404にする。
+  private def parseId(text: String): Either[String, ULID] =
+    ULID.unapply(text).toRight("Not Found")
+
   // パス入力のないエンドポイントはすべてのパスに一致する。ルートだけに限定するため空パスを指定する。
   private val index = endpoint.get
     .in("")
@@ -82,16 +88,15 @@ object NotesServer:
       Future.successful(renderIndex(headers, url, "GET", selected = None))
 
   private val show = endpoint.get
-    .in("notes" / path[Long]("id"))
+    .in("notes" / path[String]("id"))
     .in(InertiaTapir.inertiaHeadersInput)
     .in(requestUrl)
     .out(InertiaTapir.inertiaOutput)
     .errorOut(notFound)
-    .serverLogic[Future]: (id, headers, url) =>
+    .serverLogic[Future]: (rawId, headers, url) =>
       Future.successful:
-        repo.find(id) match
-          case Some(note) => Right(renderIndex(headers, url, "GET", selected = Some(note)))
-          case None       => Left("Not Found")
+        parseId(rawId).flatMap(id => repo.find(id).toRight("Not Found")).map: note =>
+          renderIndex(headers, url, "GET", selected = Some(note))
 
   private val create = endpoint.post
     .in("notes")
@@ -108,31 +113,32 @@ object NotesServer:
           redirect(headers, "POST", s"/notes/${note.id}")
 
   private val update = endpoint.put
-    .in("notes" / path[Long]("id"))
+    .in("notes" / path[String]("id"))
     .in(InertiaTapir.inertiaHeadersInput)
     .in(requestUrl)
     .in(jsonBody[NoteInput])
     .out(InertiaTapir.inertiaOutput)
     .errorOut(notFound)
-    .serverLogic[Future]: (id, headers, url, input) =>
+    .serverLogic[Future]: (rawId, headers, url, input) =>
       Future.successful:
-        repo.find(id) match
-          case None           => Left("Not Found")
-          case Some(existing) =>
-            val errors = NoteInput.validate(input)
-            if errors.nonEmpty then Right(renderIndex(headers, url, "PUT", selected = Some(existing), errors = errors))
-            else
-              repo.update(id, input)
-              Right(redirect(headers, "PUT", s"/notes/$id"))
+        for
+          id       <- parseId(rawId)
+          existing <- repo.find(id).toRight("Not Found")
+        yield
+          val errors = NoteInput.validate(input)
+          if errors.nonEmpty then renderIndex(headers, url, "PUT", selected = Some(existing), errors = errors)
+          else
+            repo.update(id, input)
+            redirect(headers, "PUT", s"/notes/$id")
 
   private val delete = endpoint.delete
-    .in("notes" / path[Long]("id"))
+    .in("notes" / path[String]("id"))
     .in(InertiaTapir.inertiaHeadersInput)
     .out(InertiaTapir.inertiaOutput)
     .errorOut(notFound)
-    .serverLogic[Future]: (id, headers) =>
+    .serverLogic[Future]: (rawId, headers) =>
       Future.successful:
-        if repo.delete(id) then Right(redirect(headers, "DELETE", "/")) else Left("Not Found")
+        parseId(rawId).filterOrElse(repo.delete, "Not Found").map(_ => redirect(headers, "DELETE", "/"))
 
   // vite buildの成果物を配信する。devサーバ利用時はディレクトリがなく404を返すだけで問題はない。
   private val assets: ServerEndpoint[Any, Future] =

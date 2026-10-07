@@ -99,12 +99,20 @@ $ psql postgresql://parlance:parlance@localhost:5432/parlance_exercise
 
 ```
 db/Entities.scala    Note / Tag / NoteTag のエンティティと Creator、Repo、リレーション
-db/Migrations.scala  V1_Notes（notes）、V2_Tags（tags、note_tags）
+db/Migrations.scala  V1_Notes（notes）、V2_Tags（tags、note_tags）、V3_UlidIds（主キーを ULID に変更）
 db/Database.scala    環境変数からの接続設定、HikariCP、Transactor、Migrator
 db/Migrate.scala     マイグレーションを操作する CLI
 ```
 
 テーブルは `notes`、`tags`、`note_tags` の 3 つです。タグはメモ間で共有される独立したエンティティで、`note_tags` を介した多対多（`Note.tags` / `Tag.notes`）で結び付きます。`notes` の `created_at` と `updated_at` は `Timestamps` ミックスインが挿入・更新時に設定します。
+
+### ID は ULID
+
+3 テーブルの主キーは ULID で、PostgreSQL の `uuid` 列に 128 ビットをそのまま入れています。採番は DB 側で、V3 マイグレーションが定義する `gen_ulid(ts timestamptz DEFAULT clock_timestamp())` 関数が各テーブルの `DEFAULT` です。先頭 48 ビットがミリ秒の UNIX 時刻、残り 80 ビットが `gen_random_uuid()` から取った乱数なので、拡張は要りません。Parlance 0.1.0 は `Creator` に `@Id` の項目を含めることを許さないため、アプリ側で採番する構成は取れません。
+
+エンティティの `id` の Scala 型は `java.util.UUID` です。Parlance 0.1.0 の `belongsToMany` は中間テーブルの外部キーをコーデックを通さず JDBC の `setObject` と `getObject` で読み書きするので、JDBC が直接扱える型である必要があります。Web 層の `parlance.exercise.Note` では airframe-ulid の `ULID` に変換し、URL と JSON では `01M4BQ3K6K8H4VQER4JAZN24ZZ` のような 26 文字の文字列になります。ULID として解釈できない ID を URL に指定すると 404 を返します。
+
+V3 マイグレーションは既存の行を変換して残します。`notes` の既存行には `created_at` を時刻に使った ULID を割り当て、`note_tags` の外部キーを張り直してから `bigint` の列を削除します。`rollback` では `bigserial` で連番を振り直すので、元の番号には戻りません。
 
 Web 層の `parlance.exercise.Note`（タグ名の一覧を持つ DTO）と、`parlance.exercise.db.Note`（`notes` の 1 行）は別の型です。
 

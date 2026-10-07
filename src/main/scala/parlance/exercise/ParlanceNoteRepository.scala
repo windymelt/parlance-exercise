@@ -2,8 +2,11 @@ package parlance.exercise
 
 import ma.chinespirit.parlance.*
 import parlance.exercise.db.{Database, NoteCreator, Tag, TagCreator, Note as NoteRow}
+import wvlet.airframe.ulid.ULID
 
-/** Parlanceのエンティティを使う実装。notesの1行とタグをまとめてWeb層のNoteに変換する。 */
+import java.util.UUID
+
+/** Parlanceのエンティティを使う実装。notesの1行とタグをまとめてWeb層のNoteに変換し、uuid列のIDはULIDとして返す。 */
 final class ParlanceNoteRepository(database: Database) extends NoteRepository:
   private val xa = database.xa
 
@@ -16,8 +19,8 @@ final class ParlanceNoteRepository(database: Database) extends NoteRepository:
       .map(toView)
       .toList
 
-  def find(id: Long): Option[Note] = xa.connect:
-    NoteRow.repo.findById(id).map(row => toView(row, row.load(NoteRow.tags)))
+  def find(id: ULID): Option[Note] = xa.connect:
+    NoteRow.repo.findById(id.toUUID).map(row => toView(row, row.load(NoteRow.tags)))
 
   def create(input: NoteInput): Note = xa.transact:
     val in   = input.normalized
@@ -26,16 +29,16 @@ final class ParlanceNoteRepository(database: Database) extends NoteRepository:
     if tags.nonEmpty then NoteRow.tags.attach(row, tags*)
     toView(row, tags)
 
-  def update(id: Long, input: NoteInput): Option[Note] = xa.transact:
-    NoteRow.repo.findById(id).map: existing =>
+  def update(id: ULID, input: NoteInput): Option[Note] = xa.transact:
+    NoteRow.repo.findById(id.toUUID).map: existing =>
       val in = input.normalized
       existing.copy(title = in.title, body = in.body).save()
       val tags = ensureTags(in.tags)
       NoteRow.tags.sync(existing, tags)
       toView(existing.refresh(), tags)
 
-  def delete(id: Long): Boolean = xa.transact:
-    NoteRow.repo.findById(id) match
+  def delete(id: ULID): Boolean = xa.transact:
+    NoteRow.repo.findById(id.toUUID) match
       case Some(row) =>
         // note_tagsの行は外部キーのON DELETE CASCADEで消える。タグ自体は他のメモと共有しうるので残す。
         row.delete()
@@ -43,7 +46,7 @@ final class ParlanceNoteRepository(database: Database) extends NoteRepository:
       case None => false
 
   // 生SQL用のテーブル・列参照。列名はエンティティ定義から取るので、改名するとコンパイルエラーになる。
-  private val tagsTable = TableInfo[TagCreator, Tag, Long]
+  private val tagsTable = TableInfo[TagCreator, Tag, UUID]
 
   /** 名前に対応するタグ行を揃える。無い名前だけを挿入し、同名の同時挿入はON CONFLICT DO NOTHINGで無視される。 */
   private def ensureTags(names: List[String])(using DbCon[Postgres]): Vector[Tag] =
@@ -58,6 +61,6 @@ final class ParlanceNoteRepository(database: Database) extends NoteRepository:
       Tag.repo.query.where(_.name in names).run()
 
   private def toView(row: NoteRow, tags: Vector[Tag]): Note =
-    Note(row.id, row.title, row.body, tags.map(_.name).sorted.toList, row.createdAt, row.updatedAt)
+    Note(ULID.fromUUID(row.id), row.title, row.body, tags.map(_.name).sorted.toList, row.createdAt, row.updatedAt)
 
   private def toView(pair: (NoteRow, Vector[Tag])): Note = toView(pair._1, pair._2)

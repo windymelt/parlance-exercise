@@ -3,11 +3,13 @@ package parlance.exercise
 import com.github.plokhotnyuk.jsoniter_scala.core.*
 import com.github.plokhotnyuk.jsoniter_scala.macros.*
 
+import wvlet.airframe.ulid.ULID
+
 import java.time.Instant
 
-/** メモ1件。時刻はISO-8601文字列としてそのままフロントエンドへ渡す。 */
+/** メモ1件。idはULIDの26文字、時刻はISO-8601文字列としてそのままフロントエンドへ渡す。 */
 final case class Note(
-  id: Long,
+  id: ULID,
   title: String,
   body: String,
   tags: List[String],
@@ -16,6 +18,14 @@ final case class Note(
 )
 
 object Note:
+  /** ULIDをJSONの文字列として読み書きする。 */
+  given JsonValueCodec[ULID] = new JsonValueCodec[ULID]:
+    def decodeValue(in: JsonReader, default: ULID): ULID =
+      val text = in.readString(null)
+      ULID.unapply(text).getOrElse(in.decodeError(s"ULIDではありません: $text"))
+    def encodeValue(x: ULID, out: JsonWriter): Unit = out.writeVal(x.toString)
+    def nullValue: ULID                               = null
+
   // jsoniter-scalaは既定で空のコレクションを出力から省き、フロントエンドの型`tags: string[]`と一致しなくなる。
   // そのため空でも`"tags":[]`を出力する。マクロが設定を定数として読むので、valに切り出さず各呼び出しに直接書く。
   given JsonValueCodec[Note]       = JsonCodecMaker.make(CodecMakerConfig.withTransientEmpty(false))
