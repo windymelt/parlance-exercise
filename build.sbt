@@ -4,6 +4,7 @@ val inertiaVersion         = "0.2.0"
 val jsoniterVersion        = "2.38.9"
 val parlanceVersion        = "0.1.0"
 val testcontainersVersion  = "0.44.1"
+val scribeVersion          = "3.19.0"
 
 lazy val root = project
   .in(file("."))
@@ -36,7 +37,10 @@ lazy val root = project
       "ma.chinespirit"                        %% "parlance-migrate"                % parlanceVersion,
       "org.postgresql"                        %  "postgresql"                      % "42.7.13",
       "com.zaxxer"                            %  "HikariCP"                        % "7.1.0",
-      "org.slf4j"                             %  "slf4j-simple"                    % "2.0.20"        % Runtime,
+      // ログはscribeに集める。HikariCPとNettyはSLF4J経由、ParlanceのSQLログはSystem.Logger経由で届く
+      "com.outr"                              %% "scribe"                          % scribeVersion,
+      "com.outr"                              %% "scribe-slf4j2"                   % scribeVersion   % Runtime,
+      "com.outr"                              %% "scribe-jpl"                      % scribeVersion   % Runtime,
       "org.scalameta"                         %% "munit"                           % "1.3.6"         % Test,
       "com.dimafeng"                          %% "testcontainers-scala-munit"      % testcontainersVersion % Test,
       "com.dimafeng"                          %% "testcontainers-scala-postgresql" % testcontainersVersion % Test,

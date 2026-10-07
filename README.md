@@ -4,8 +4,7 @@
 サーバは Scala 3 + [Tapir](https://tapir.softwaremill.com/)（Netty バックエンド、`Future`）、フロントエンドは Vite + React + TypeScript で構成しています。
 メモはタイトル・本文・タグを持ちます。
 
-現時点ではメモの保存先はインメモリ（`InMemoryNoteRepository`）で、プロセスを再起動すると内容は消えます。
-永続化は `NoteRepository` トレイトの実装を Parlance を使ったものに差し替える形で後から追加する予定です。
+メモは PostgreSQL に保存します。永続化層は [Parlance](https://github.com/lbialy/parlance) で、Web 層からは `NoteRepository` トレイトを通して使います。
 
 ## 構成
 
@@ -14,7 +13,8 @@ build.sbt
 src/main/scala/parlance/exercise/
   NotesServer.scala      Tapir のエンドポイント定義。InertiaTapir.render / redirect を呼ぶ
   Note.scala             Note モデル・フォーム入力・バリデーション・jsoniter コーデック
-  NoteRepository.scala   永続化境界のトレイトとインメモリ実装
+  NoteRepository.scala   永続化境界のトレイト
+  ParlanceNoteRepository.scala  Parlance のエンティティを使う NoteRepository の実装
   Layout.scala           Inertia のページ要素を包む HTML レイアウト（dev / build の 2 種）
 frontend/
   src/main.tsx           createInertiaApp のエントリ
@@ -45,9 +45,10 @@ frontend/
 
 ## 開発時の起動
 
-ターミナルを 2 つ使います。
+PostgreSQL を起動してから、ターミナルを 2 つ使います。サーバは起動時に未適用のマイグレーションを適用します。
 
 ```console
+$ docker compose up -d                         # PostgreSQL (localhost:5432)
 $ cd frontend && npm install && npm run dev   # Vite dev サーバ (http://localhost:5173)
 $ sbt run                                      # Tapir サーバ (http://localhost:9000)
 ```
@@ -118,11 +119,32 @@ $ sbt "runMain parlance.exercise.db.Migrate verify"    # エンティティ定�
 $ sbt "runMain parlance.exercise.db.Migrate rollback"  # 直近のバッチを取り消す
 ```
 
-Web サーバ（`NotesServer`）はまだインメモリの `NoteRepository` を使っており、これらのエンティティには接続していません。
+Web サーバ（`NotesServer`）は起動時に `Database.fromEnv()` で接続プールを作り、`migrate()` を呼んでから `ParlanceNoteRepository` を使います。一覧は `withRelated(Note.tags)` でタグをまとめて読み、作成・更新ではタグ名から `tags` の行を揃えて `note_tags` を `attach` / `sync` します。メモを削除しても `tags` の行は残ります。
+
+### ログと SQL ログ
+
+ログは [scribe](https://github.com/outr/scribe) に集めています。HikariCP と Netty は SLF4J に書くので `scribe-slf4j2` で、Parlance は `java.lang.System.Logger`（ロガー名 `ma.chinespirit.parlance`）に書くので `scribe-jpl` で scribe に届きます。設定ファイルはなく、起動時に `Logging.configure()` が Parlance のロガーのレベルを決める仕組みです。既定は `debug` なので、`sbt run` のログに実行した SQL と所要時間が出ます。
+
+```
+2026.10.08 02:57:05:048 scala-execution-context-global-54 DEBUG ma.chinespirit.parlance
+Executed Query in 4 milliseconds:
+SELECT id, title, body, created_at, updated_at FROM notes ORDER BY updated_at DESC, id DESC
+```
+
+scribe の既定の整形では、日時・スレッド・レベル・ロガー名の行は直前の記録から変わったときだけ出ます。同じスレッドで続けて実行した SQL は本文だけが並びます。
+
+環境変数 `SQL_LOG_LEVEL` でレベルを上書きできます。`trace` ではバインドした値も出ます。`info` では SQL ログが止まります。テストでは既定を `info` にしているので、見たいときは同じ環境変数で上書きしてください。
+
+```console
+$ SQL_LOG_LEVEL=trace sbt run
+$ SQL_LOG_LEVEL=debug sbt test
+```
+
+Parlance 0.1.0 では `attach` / `sync` / `withRelated` が `note_tags` に対して発行する SQL と、マイグレーションの SQL はロガーを通らないため、このログには出ません。
 
 ## テスト
 
 ```console
-$ sbt test                       # munit テスト。DatabaseSuite は testcontainers で PostgreSQL コンテナを起動するため Docker が必要
+$ sbt test                       # munit テスト。DatabaseSuite と ParlanceNoteRepositorySuite は testcontainers で PostgreSQL コンテナを起動するため Docker が必要
 $ cd frontend && npm run typecheck
 ```

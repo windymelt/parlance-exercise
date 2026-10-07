@@ -5,9 +5,14 @@ import com.dimafeng.testcontainers.munit.fixtures.TestContainersFixtures
 import ma.chinespirit.parlance.*
 import munit.{AnyFixture, FunSuite}
 import org.testcontainers.utility.DockerImageName
+import parlance.exercise.Logging
+import scribe.Level
 
 /** 専用のPostgreSQLコンテナに対して、マイグレーションとエンティティの読み書きを通しで確認する。 */
 class DatabaseSuite extends FunSuite, TestContainersFixtures:
+
+  // テストではSQLログを出さない。見たいときはSQL_LOG_LEVEL=debugのように環境変数で上書きする
+  Logging.configure(defaultSqlLogLevel = Level.Info)
 
   private val container = ForAllContainerFixture(
     PostgreSQLContainer.Def(dockerImageName = DockerImageName.parse("postgres:18-alpine")).createContainer(),

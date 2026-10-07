@@ -3,6 +3,7 @@ package parlance.exercise
 import dev.capslock.inertia.core.JsoniterProps.*
 import dev.capslock.inertia.core.{*, given}
 import dev.capslock.inertia.tapir.*
+import parlance.exercise.db.Database
 import sttp.model.StatusCode
 import sttp.tapir.*
 import sttp.tapir.files.*
@@ -11,7 +12,6 @@ import sttp.tapir.server.ServerEndpoint
 import sttp.tapir.server.netty.NettyFutureServer
 
 import java.nio.file.{Files, Path}
-import java.time.Instant
 import java.util.concurrent.CountDownLatch
 import scala.concurrent.duration.*
 import scala.concurrent.{Await, ExecutionContext, Future}
@@ -30,15 +30,12 @@ object NotesServer:
       .fromManifest(distDir)
       .getOrElse(Layout.ViteDev(sys.env.getOrElse("VITE_DEV_SERVER", "http://localhost:5173")))
 
-  // DB導入時はParlanceを使った実装に差し替える。
-  private val repo: NoteRepository =
-    val now = Instant.now()
-    InMemoryNoteRepository(
-      List(
-        Note(1, "はじめてのメモ", "ここに本文を書きます。\n\n左の一覧からメモを選ぶか、「新しいメモ」から作成してください。", List("使い方"), now, now),
-        Note(2, "買い物リスト", "- 牛乳\n- 卵\n- コーヒー豆", List("家事", "todo"), now.minusSeconds(3600), now.minusSeconds(3600)),
-      ),
-    )
+  // ParlanceがSQLを実行する前にSQLログのレベルを決める
+  Logging.configure()
+
+  // 接続情報はcompose.yamlと同じ環境変数から読む。DBに接続できなければここで失敗する。
+  private val database: Database     = Database.fromEnv()
+  private val repo: NoteRepository   = ParlanceNoteRepository(database)
 
   // jsonBody[NoteInput]に必要なスキーマ。JSONコーデックはNoteInputのコンパニオンにある。
   private given Schema[NoteInput] = Schema.derived
@@ -107,7 +104,7 @@ object NotesServer:
         val errors = NoteInput.validate(input)
         if errors.nonEmpty then renderIndex(headers, url, "POST", selected = None, errors = errors)
         else
-          val note = repo.create(input, Instant.now())
+          val note = repo.create(input)
           redirect(headers, "POST", s"/notes/${note.id}")
 
   private val update = endpoint.put
@@ -125,7 +122,7 @@ object NotesServer:
             val errors = NoteInput.validate(input)
             if errors.nonEmpty then Right(renderIndex(headers, url, "PUT", selected = Some(existing), errors = errors))
             else
-              repo.update(id, input, Instant.now())
+              repo.update(id, input)
               Right(redirect(headers, "PUT", s"/notes/$id"))
 
   private val delete = endpoint.delete
@@ -147,6 +144,10 @@ object NotesServer:
   // ── Main ────────────────────────────────────────────────────────────────────
 
   def main(args: Array[String]): Unit =
+    val migrated = database.migrate()
+    if migrated.appliedCount > 0 then println(s"database: applied ${migrated.appliedCount} migration(s)")
+    else println("database: schema is up to date")
+
     val binding = Await.result(NettyFutureServer().port(port).addEndpoints(endpoints).start(), Duration.Inf)
     println(s"listening on http://localhost:${binding.port}")
     if Files.isDirectory(distDir) then println(s"frontend: serving built assets from $distDir")
@@ -155,5 +156,6 @@ object NotesServer:
     val stopped = new CountDownLatch(1)
     sys.addShutdownHook:
       Await.result(binding.stop(), 10.seconds)
+      database.close()
       stopped.countDown()
     stopped.await()
