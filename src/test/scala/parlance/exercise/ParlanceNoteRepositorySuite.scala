@@ -7,6 +7,7 @@ import munit.{AnyFixture, FunSuite}
 import org.testcontainers.utility.DockerImageName
 import parlance.exercise.db.{Database, DbConfig, Tag}
 import scribe.Level
+import wvlet.airframe.ulid.ULID
 
 /** 専用のPostgreSQLコンテナに対して、Web層が使うリポジトリの振る舞いを確認する。 */
 class ParlanceNoteRepositorySuite extends FunSuite, TestContainersFixtures:
@@ -34,7 +35,7 @@ class ParlanceNoteRepositorySuite extends FunSuite, TestContainersFixtures:
 
   test("create normalizes tags and find returns the same note"):
     val created = repo.create(NoteInput("  最初のメモ ", "本文", List(" web ", "scala", "", "web")))
-    assert(created.id > 0L)
+    assert(ULID.isValid(created.id.toString), created.id.toString)
     assertEquals(created.title, "最初のメモ")
     assertEquals(created.tags, List("scala", "web"))
     assertEquals(created.createdAt, created.updatedAt)
@@ -61,8 +62,9 @@ class ParlanceNoteRepositorySuite extends FunSuite, TestContainersFixtures:
     assertEquals(repo.find(n2.id).map(_.tags), Some(List("shared")))
 
   test("update and delete report unknown ids"):
-    assertEquals(repo.update(999_999L, NoteInput("x", "")), None)
-    assert(!repo.delete(999_999L))
+    val unknown = ULID.newULID
+    assertEquals(repo.update(unknown, NoteInput("x", "")), None)
+    assert(!repo.delete(unknown))
 
   test("delete removes the note and its tag links but keeps the tags"):
     val before = db.xa.connect(Tag.repo.count)

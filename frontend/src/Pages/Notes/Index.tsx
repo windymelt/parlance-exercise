@@ -27,7 +27,7 @@ export default function NotesIndex({ notes, selected, errors }: NotesIndexProps)
   )
 }
 
-function NoteList({ notes, selectedId }: { notes: Note[]; selectedId: number | null }) {
+function NoteList({ notes, selectedId }: { notes: Note[]; selectedId: string | null }) {
   if (notes.length === 0) {
     return <p className="sidebar__empty">メモはまだありません</p>
   }

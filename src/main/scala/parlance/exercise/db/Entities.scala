@@ -3,6 +3,12 @@ package parlance.exercise.db
 import ma.chinespirit.parlance.*
 
 import java.time.Instant
+import java.util.UUID
+
+// IDはDBがgen_ulid()で採番するULIDで、uuid列に入っている。
+// Scala側の型はjava.util.UUIDにしている。Parlance 0.1.0のbelongsToManyは中間テーブルの
+// 外部キーをコーデックを通さずsetObjectとgetObjectで読み書きするため、JDBCが直接扱える型でないと
+// attachやsyncが失敗するからである。Web層でULID文字列に変換する。
 
 // ── notes ────────────────────────────────────────────────────────────────────
 
@@ -18,7 +24,7 @@ final case class NoteCreator(
 @SqlName("notes")
 @Table(SqlNameMapper.CamelToSnakeCase)
 final case class Note(
-  @Id id: Long,
+  @Id id: UUID,
   title: String,
   body: String,
   @createdAt createdAt: Instant,
@@ -29,8 +35,8 @@ object Note:
   val tags = Relationship.belongsToMany[Note, Tag]("note_tags", "note_id", "tag_id")
 
   // Timestampsを混ぜると、挿入時にcreated_atとupdated_atを、更新時にupdated_atをCURRENT_TIMESTAMPにする
-  given repo: (Repo[NoteCreator, Note, Long] & Timestamps[NoteCreator, Note, Long]) =
-    new Repo[NoteCreator, Note, Long] with Timestamps[NoteCreator, Note, Long]
+  given repo: (Repo[NoteCreator, Note, UUID] & Timestamps[NoteCreator, Note, UUID]) =
+    new Repo[NoteCreator, Note, UUID] with Timestamps[NoteCreator, Note, UUID]
 
 // ── tags ─────────────────────────────────────────────────────────────────────
 
@@ -44,35 +50,35 @@ final case class TagCreator(
 @SqlName("tags")
 @Table(SqlNameMapper.CamelToSnakeCase)
 final case class Tag(
-  @Id id: Long,
+  @Id id: UUID,
   name: String,
 ) derives EntityMeta
 
 object Tag:
   val notes = Relationship.belongsToMany[Tag, Note]("note_tags", "tag_id", "note_id")
 
-  given repo: Repo[TagCreator, Tag, Long] = Repo[TagCreator, Tag, Long]()
+  given repo: Repo[TagCreator, Tag, UUID] = Repo[TagCreator, Tag, UUID]()
 
 // ── note_tags ────────────────────────────────────────────────────────────────
 
 @SqlName("note_tags")
 @Table(SqlNameMapper.CamelToSnakeCase)
 final case class NoteTagCreator(
-  noteId: Long,
-  tagId: Long,
+  noteId: UUID,
+  tagId: UUID,
 ) extends CreatorOf[NoteTag] derives DbCodec
 
 /** `note_tags`の1行。メモとタグの組は一意で、どちらかを削除すると連鎖して消える。 */
 @SqlName("note_tags")
 @Table(SqlNameMapper.CamelToSnakeCase)
 final case class NoteTag(
-  @Id id: Long,
-  noteId: Long,
-  tagId: Long,
+  @Id id: UUID,
+  noteId: UUID,
+  tagId: UUID,
 ) derives EntityMeta
 
 object NoteTag:
   val note = Relationship.belongsTo[NoteTag, Note](_.noteId, _.id)
   val tag  = Relationship.belongsTo[NoteTag, Tag](_.tagId, _.id)
 
-  given repo: Repo[NoteTagCreator, NoteTag, Long] = Repo[NoteTagCreator, NoteTag, Long]()
+  given repo: Repo[NoteTagCreator, NoteTag, UUID] = Repo[NoteTagCreator, NoteTag, UUID]()

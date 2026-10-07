@@ -5,6 +5,7 @@ val jsoniterVersion        = "2.38.9"
 val parlanceVersion        = "0.1.0"
 val testcontainersVersion  = "0.44.1"
 val scribeVersion          = "3.19.0"
+val airframeUlidVersion    = "2026.2.2"
 
 lazy val root = project
   .in(file("."))
@@ -35,6 +36,7 @@ lazy val root = project
       "com.github.plokhotnyuk.jsoniter-scala" %% "jsoniter-scala-macros"           % jsoniterVersion % "compile-internal",
       "ma.chinespirit"                        %% "parlance"                        % parlanceVersion,
       "ma.chinespirit"                        %% "parlance-migrate"                % parlanceVersion,
+      "org.wvlet.airframe"                    %% "airframe-ulid"                   % airframeUlidVersion,
       "org.postgresql"                        %  "postgresql"                      % "42.7.13",
       "com.zaxxer"                            %  "HikariCP"                        % "7.1.0",
       // ログはscribeに集める。HikariCPとNettyはSLF4J経由、ParlanceのSQLログはSystem.Logger経由で届く
