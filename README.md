@@ -66,6 +66,34 @@ $ sbt run
 
 dev サーバに戻すには `frontend/dist` を削除してください。
 
+## PostgreSQL（Docker Compose）
+
+Parlance で永続化する際に使う PostgreSQL を `compose.yaml` で定義しています。
+
+```console
+$ docker compose up -d          # 起動。healthcheck が通るまで数秒かかります
+$ docker compose ps             # STATUS が healthy になれば接続できます
+$ docker compose down           # 停止（データは db-data ボリュームに残ります）
+$ docker compose down -v        # 停止してデータも削除
+```
+
+既定の接続情報は次のとおりです。
+
+| 項目 | 値 |
+| --- | --- |
+| ホスト / ポート | `localhost:5432` |
+| データベース | `parlance_exercise` |
+| ユーザー / パスワード | `parlance` / `parlance` |
+| JDBC URL | `jdbc:postgresql://localhost:5432/parlance_exercise` |
+
+値は環境変数 `POSTGRES_USER`、`POSTGRES_PASSWORD`、`POSTGRES_DB`、`POSTGRES_PORT` で上書きできます。プロジェクト直下に `.env` を置くと Compose が自動で読み込みます（`.env` は git 管理外です）。
+
+```console
+$ psql postgresql://parlance:parlance@localhost:5432/parlance_exercise
+```
+
+アプリケーションはまだ DB に接続していません。接続を実装する際は、上と同じ環境変数から接続情報を組み立てる想定です。
+
 ## テスト
 
 ```console

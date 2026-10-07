@@ -1,0 +1,26 @@
+# 開発用のPostgreSQL。起動は`docker compose up -d`、停止は`docker compose down`で行う。
+# データも消す場合は`docker compose down -v`を使う。
+services:
+  db:
+    image: postgres:18-alpine
+    container_name: parlance-exercise-db
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-parlance}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-parlance}
+      POSTGRES_DB: ${POSTGRES_DB:-parlance_exercise}
+      # 新規クラスタ作成時のロケールと文字コードを指定する
+      POSTGRES_INITDB_ARGS: --encoding=UTF8 --locale=C.UTF-8
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      # postgres:18以降はクラスタが/var/lib/postgresql/<major>/dockerに作られるので、親ディレクトリをマウントする
+      - db-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-parlance} -d ${POSTGRES_DB:-parlance_exercise}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+volumes:
+  db-data:
