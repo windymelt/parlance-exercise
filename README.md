@@ -92,11 +92,37 @@ $ docker compose down -v        # 停止してデータも削除
 $ psql postgresql://parlance:parlance@localhost:5432/parlance_exercise
 ```
 
-アプリケーションはまだ DB に接続していません。接続を実装する際は、上と同じ環境変数から接続情報を組み立てる想定です。
+## Parlance（エンティティとマイグレーション）
+
+永続化には [Parlance](https://github.com/lbialy/parlance) を使います。エンティティとマイグレーションは `src/main/scala/parlance/exercise/db/` にあります。
+
+```
+db/Entities.scala    Note / Tag / NoteTag のエンティティと Creator、Repo、リレーション
+db/Migrations.scala  V1_Notes（notes）、V2_Tags（tags、note_tags）
+db/Database.scala    環境変数からの接続設定、HikariCP、Transactor、Migrator
+db/Migrate.scala     マイグレーションを操作する CLI
+```
+
+テーブルは `notes`、`tags`、`note_tags` の 3 つです。タグはメモ間で共有される独立したエンティティで、`note_tags` を介した多対多（`Note.tags` / `Tag.notes`）で結び付きます。`notes` の `created_at` と `updated_at` は `Timestamps` ミックスインが挿入・更新時に設定します。
+
+Web 層の `parlance.exercise.Note`（タグ名の一覧を持つ DTO）と、`parlance.exercise.db.Note`（`notes` の 1 行）は別の型です。
+
+接続情報は compose.yaml と同じ環境変数 `POSTGRES_HOST`、`POSTGRES_PORT`、`POSTGRES_DB`、`POSTGRES_USER`、`POSTGRES_PASSWORD` から組み立てます。
+
+```console
+$ docker compose up -d
+$ sbt "runMain parlance.exercise.db.Migrate"           # 未適用のマイグレーションを適用
+$ sbt "runMain parlance.exercise.db.Migrate status"    # 適用状況
+$ sbt "runMain parlance.exercise.db.Migrate pretend"   # 実行せず SQL を表示
+$ sbt "runMain parlance.exercise.db.Migrate verify"    # エンティティ定義とスキーマの照合
+$ sbt "runMain parlance.exercise.db.Migrate rollback"  # 直近のバッチを取り消す
+```
+
+Web サーバ（`NotesServer`）はまだインメモリの `NoteRepository` を使っており、これらのエンティティには接続していません。
 
 ## テスト
 
 ```console
-$ sbt test                       # リポジトリとバリデーションの munit テスト
+$ sbt test                       # munit テスト。DatabaseSuite は testcontainers で PostgreSQL コンテナを起動するため Docker が必要
 $ cd frontend && npm run typecheck
 ```
